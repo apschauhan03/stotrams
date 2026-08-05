@@ -3,7 +3,7 @@ spring:
     name: stotram-server
 
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/stotram}
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/stotram}
     username: ${DB_USER:stotram}
     password: ${DB_PASSWORD:stotram}
 
