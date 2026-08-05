@@ -1,0 +1,8 @@
+{
+  "categories": [
+    { "slug": "good-morning", "nameEn": "Good Morning", "nameHi": "सुप्रभात", "sortOrder": 1 },
+    { "slug": "good-night", "nameEn": "Good Night", "nameHi": "शुभ रात्रि", "sortOrder": 2 }
+  ],
+  "items": [
+  ]
+}

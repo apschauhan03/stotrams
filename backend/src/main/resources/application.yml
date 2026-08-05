@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: stotram-server
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/stotram}
+    username: ${DB_USER:stotram}
+    password: ${DB_PASSWORD:stotram}
+
+  jpa:
+    # Flyway owns the schema; JPA never touches DDL.
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 9303
+
+app:
+  media:
+    # Base URL that feed image URLs are built from.
+    # Local now (images served from resources/static); swap to the CDN domain later.
+    base-url: ${MEDIA_BASE_URL:http://localhost:9303}
+  feed:
+    page-size: 20
+  bootstrap:
+    # On startup, load resources/data/initial-content.json into the DB (idempotent).
+    enabled: ${BOOTSTRAP_ENABLED:true}
