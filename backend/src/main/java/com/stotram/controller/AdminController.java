@@ -1,7 +1,10 @@
 package com.stotram.controller;
 
 import com.stotram.dto.CandidateResponse;
+import com.stotram.dto.GenerateResponse;
+import com.stotram.model.GenerationBatch;
 import com.stotram.service.AdminReviewService;
+import com.stotram.service.generation.GenerationService;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,9 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminController {
 
     private final AdminReviewService reviewService;
+    private final GenerationService generationService;
 
-    public AdminController(AdminReviewService reviewService) {
+    public AdminController(AdminReviewService reviewService, GenerationService generationService) {
         this.reviewService = reviewService;
+        this.generationService = generationService;
     }
 
     /** Thumbnails awaiting review; defaults to the GENERATED queue. */
@@ -44,15 +49,23 @@ public class AdminController {
     }
 
     /**
-     * Kick off a generation batch. Stubbed: needs the AI image client
-     * (deferred with the pipeline). Endpoint exists so the frontend can wire to it.
+     * Kick off a generation batch. Returns 202 as soon as the batch row exists — the images
+     * are generated on a background pool and land in the review queue as they finish, so
+     * poll {@code GET /candidates?status=GENERATED} to watch progress.
      */
     @PostMapping("/generate")
-    public ResponseEntity<String> generate(
+    public ResponseEntity<GenerateResponse> generate(
             @RequestParam String category,
-            @RequestParam(defaultValue = "25") int count) {
-        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
-                .body("generate not implemented yet: needs the AI image client");
+            @RequestParam(defaultValue = "25") int count,
+            @RequestParam(defaultValue = "hi") String lang) {
+
+        GenerationBatch batch = generationService.startBatch(category, count, lang);
+
+        return ResponseEntity.accepted().body(new GenerateResponse(
+                batch.getId(),
+                category,
+                count,
+                "Generation started. Poll GET /admin/candidates?status=GENERATED to watch images land."));
     }
 
     /**
