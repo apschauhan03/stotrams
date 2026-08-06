@@ -1,0 +1,24 @@
+# Local Postgres for development. Credentials match application.yml defaults
+# (DB_URL / DB_USER / DB_PASSWORD). Start with: docker compose up -d
+services:
+  postgres:
+    image: postgres:16
+    container_name: stotram-postgres
+    environment:
+      POSTGRES_DB: stotram
+      POSTGRES_USER: stotram
+      POSTGRES_PASSWORD: stotram
+      TZ: Asia/Kolkata     # or UTC
+    ports:
+      # Host 5433 -> container 5432 (host 5432 is taken by a local Postgres).
+      - "5433:5432"
+    volumes:
+      - stotram-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stotram -d stotram"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  stotram-pgdata:
