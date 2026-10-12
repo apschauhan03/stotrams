@@ -28,8 +28,38 @@ app:
     # Base URL that feed image URLs are built from.
     # Local now (images served from resources/static); swap to the CDN domain later.
     base-url: ${MEDIA_BASE_URL:http://localhost:9303}
+    # Where generated images are written. Maps to the R2 bucket root later: the directory
+    # is the bucket, content_item.r2_key is the object key. TODO: move to a CDN — replace
+    # LocalImageStorage with an R2 implementation and point base-url at the CDN domain.
+    local-dir: ${MEDIA_LOCAL_DIR:src/main/resources/static}
   feed:
     page-size: 20
-  bootstrap:
-    # On startup, load resources/data/initial-content.json into the DB (idempotent).
-    enabled: ${BOOTSTRAP_ENABLED:true}
+  generation:
+    # Concurrent image API calls. Bounded on purpose: providers rate-limit and every
+    # image costs money, so this is a spend ceiling as much as a performance knob.
+    concurrency: ${GENERATION_CONCURRENCY:4}
+    queue-capacity: 200
+    # Final image dimensions (4:5 portrait, the WhatsApp-status shape).
+    width: 1080
+    height: 1350
+    fake:
+      # FakeImageGenerator only — pretend a provider call takes time, and fail sometimes
+      # so the per-image error path is genuinely exercised rather than assumed.
+      latency-ms: ${FAKE_LATENCY_MS:1500}
+      failure-rate: ${FAKE_FAILURE_RATE:0.0}
+    openai:
+      # From the environment only. This repo is public — a key committed here would be
+      # scraped within minutes of the push.
+      api-key: ${OPENAI_API_KEY:}
+      base-url: https://api.openai.com/v1
+      # Supported: 1024x1024, 1024x1536 (portrait), 1536x1024, 2048x2048, auto.
+      # Not our 1080x1350 target — the resize happens later with watermarking. If arbitrary
+      # sizes are accepted (multiples of 16), 1088x1360 is exactly 4:5 and worth trying.
+      size: ${OPENAI_IMAGE_SIZE:1024x1536}
+      # low | medium | high | auto. Start low/medium and judge cost per *published* image,
+      # not cost per generated one.
+      quality: ${OPENAI_IMAGE_QUALITY:medium}
+      output-format: png            # png | jpeg | webp
+      # Set from OpenAI's current pricing for the size/quality above; feeds the per-batch
+      # cost tally on generation_batch.cost_usd. Left at 0 so we never report a made-up figure.
+      cost-per-image: ${OPENAI_COST_PER_IMAGE:0}

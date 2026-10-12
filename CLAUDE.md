@@ -52,7 +52,7 @@ Run this sequence:
 
 ---
 
-# Current architecture (as of 2026-08-06)
+# Current architecture (as of 2026-08-07)
 
 A plain-English snapshot of how the system fits together right now. For *why* decisions
 were made and the day-by-day history, read `backend/update/`.
@@ -61,8 +61,9 @@ were made and the day-by-day history, read `backend/update/`.
 
 The `backend/` server for **Stotram**, a free devotional-status platform (WhatsApp-style
 "good morning / good night" deity images, Hindi/English). One Spring Boot app does three
-jobs: a **public read-only feed**, an **admin review workflow**, and (later) a **daily AI
-image pipeline**. There is no user system and no PII — the public surface is read-only.
+jobs: a **public read-only feed**, an **admin review workflow**, and an **AI image pipeline**
+(working, manually triggered; the daily schedule comes later). There is no user system and no
+PII — the public surface is read-only.
 
 ## Stack
 
@@ -79,8 +80,11 @@ image pipeline**. There is no user system and no PII — the public surface is r
 - `service/` — business logic (`FeedService`, `AdminReviewService`).
 - `repository/` — Spring Data JPA interfaces, one per table.
 - `model/` — JPA entities (one per table; Lombok for accessors).
-- `dto/` — API response shapes (`FeedResponse`, `CandidateResponse`).
-- `bootstrap/` — `InitialContentLoader`, loads starter content on boot.
+- `dto/` — API response shapes (`FeedResponse`, `CandidateResponse`, `GenerateResponse`).
+- `service/generation/` — the AI image pipeline: `ImageGenerator` (the vendor seam),
+  `GenerationService` (orchestration), `ImageStorage`/`LocalImageStorage`, and
+  `provider/` (`OpenAiImageGenerator`, `FakeImageGenerator`).
+- `config/` — `AsyncConfig`, the bounded `imageExecutor` pool.
 
 ## Data model (5 tables)
 
@@ -94,9 +98,14 @@ field (`IMAGE`, later `VIDEO`) is why videos can be added without schema surgery
   first, paged. Each image `url` is built as `app.media.base-url` + `r2_key`.
 - **Admin review (the human gate)** — `GET /admin/candidates?status=`,
   `POST /admin/candidates/{id}/approve`, `POST /admin/candidates/{id}/reject`.
-- **Local content flow** — drop images in `backend/src/main/resources/static/images/`
-  (served at `/images/...`), describe them in `resources/data/initial-content.json`;
-  `InitialContentLoader` upserts them as `PUBLISHED` on startup (idempotent).
+- **AI image generation** — `POST /admin/generate?category=&count=&lang=` returns **202** with
+  a batch id immediately, then generates images in parallel on a bounded background pool
+  (`imageExecutor`, 4 threads) and lands each as a `GENERATED` `content_item` for review.
+  One transaction per image, so a single failure never sinks the batch.
+- **Pluggable image providers** — `prompt_template.model` holds `provider:model-id`
+  (e.g. `openai:gpt-image-2`, or `fake` for a free local placeholder), so each category picks
+  its own vendor from data. Adding a provider is one class implementing `ImageGenerator`.
+  `OPENAI_API_KEY` comes from the environment — the repo is public, never commit a key.
 
 ## The load-bearing indirection
 
@@ -106,8 +115,16 @@ same keys and changing one env var — **no code or data change**.
 
 ## Stubbed / not built yet
 
-- `POST /admin/generate` and `POST /admin/publish` return **501** — they need the AI image
-  client and the R2 + watermark + WebP publish step (deferred).
-- No **security** on `/admin/**` yet (Spring Security + Cloudflare Access come later).
-- No **R2/CDN** yet (local static files stand in).
+- `POST /admin/publish` returns **501** — needs watermark + resize + WebP + R2 upload.
+- **No prompt-template API.** Editing a prompt or switching a category's provider means raw
+  SQL against `prompt_template`. The entity says "editable from the admin panel"; the panel
+  and its endpoints don't exist yet.
+- **No watermark / WebP / resize**, so generated images are ~2.8MB and 1024×1536 rather than
+  the intended 1080×1350 — too heavy to ship to a mobile feed.
+- No **R2/CDN** yet (local static files stand in). `LocalImageStorage` writes into
+  `resources/static`, which works from source but not from a packaged jar.
+- No **security** on `/admin/**` yet (Spring Security + Cloudflare Access come later) —
+  and it now spends money.
+- No **scheduled** generation; manual trigger only.
+- `generation_batch.cost_usd` records $0 until `app.generation.openai.cost-per-image` is set.
 - `status`/`type`/`language` are plain strings (enums proposed, not yet done).

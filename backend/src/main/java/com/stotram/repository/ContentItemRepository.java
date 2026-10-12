@@ -10,8 +10,6 @@ import org.springframework.data.repository.query.Param;
 
 public interface ContentItemRepository extends JpaRepository<ContentItem, Long> {
 
-    boolean existsByR2Key(String r2Key);
-
     /** Admin review queue: items in a given status (e.g. GENERATED), newest first. */
     List<ContentItem> findByStatusOrderByIdDesc(String status);
 
