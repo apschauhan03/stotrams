@@ -38,6 +38,18 @@ Run this sequence:
    unless the user asks.
 5. Add the PR link into that day's update report, then commit and push that follow-up.
 
+## Secrets — never commit, never push (the repo is PUBLIC)
+
+- Real keys live only in **`backend/src/main/resources/application-local.yml`** (OpenAI key
+  etc.). It is gitignored, loaded by `spring.config.import` in `application.yml`, and
+  excluded from the packaged jar by `maven-jar-plugin` in `pom.xml`. Never put a key in
+  `application.yml` or any tracked file.
+- Git hooks in `.githooks/` block it: `pre-commit` refuses `application-local.*`, `.env`
+  files and key-shaped strings; `pre-push` re-checks every outgoing commit and fails closed.
+  They're active only after `git config core.hooksPath .githooks` (once per clone).
+- Before any commit/push: run `git status` and make sure no secrets file is staged. Never
+  bypass the hooks (`--no-verify`).
+
 ## Notes
 
 - "A proper PR" = descriptive title + body, targeting `main`, left open for the user to
@@ -52,79 +64,103 @@ Run this sequence:
 
 ---
 
-# Current architecture (as of 2026-08-07)
+# Current architecture (as of 2026-10-12)
 
 A plain-English snapshot of how the system fits together right now. For *why* decisions
 were made and the day-by-day history, read `backend/update/`.
 
 ## What it is
 
-The `backend/` server for **Stotram**, a free devotional-status platform (WhatsApp-style
-"good morning / good night" deity images, Hindi/English). One Spring Boot app does three
-jobs: a **public read-only feed**, an **admin review workflow**, and an **AI image pipeline**
-(working, manually triggered; the daily schedule comes later). There is no user system and no
-PII — the public surface is read-only.
+**Stotrams / स्तोत्रम्** — a free devotional-image platform (WhatsApp-style "good morning /
+good night" deity images, Hindi/English) for older users, with no ads and no user accounts.
+Two apps in this repo:
+
+- `backend/` — one Spring Boot server: the **public read-only feed**, the **admin API**
+  (login, generation blocks, review, edit, publish), and the **AI image pipeline**.
+- `frontend/` — one React (Vite) app: the **public site** (`/`) and the **admin panel**
+  (`/admin`). Falls back to built-in demo content in dev when the backend is down.
+
+Lifecycle of an image: a **block** (prompt) is generated → `GENERATED` → human review →
+`APPROVED` → **published** (watermarked JPEG, now or on the daily schedule) → `PUBLISHED`,
+visible on the site. Rejecting takes anything down. Edits create a new `GENERATED` copy.
 
 ## Stack
 
-- Java 21, Spring Boot 3.5.4, **Spring MVC** (embedded Tomcat, thread-per-request/blocking —
-  not reactive). Concurrency comes from the Tomcat thread pool + Hikari DB connection pool.
-- **PostgreSQL** via Spring Data JPA; **Flyway** owns the schema (`ddl-auto: none`).
-- Local Postgres runs via `backend/docker-compose.yml` on host port **5433**
-  (5432 is taken by a local install). App listens on **:9303**.
+- **Backend:** Java 21, Spring Boot 3.5.4, Spring MVC (blocking, embedded Tomcat), Spring
+  Security (session login), PostgreSQL via Spring Data JPA, **Flyway** owns the schema
+  (`ddl-auto: none`, migrations V1–V7). Local Postgres: `backend/docker-compose.yml` on host
+  port **5433**. App on **:9303**.
+- **Frontend:** React 18 + TypeScript + Vite 5 on **:5173**, react-router. Dev proxy:
+  `/backend/*` → :9303 (prefix stripped) and `/images/*` → :9303. Fonts self-hosted via
+  @fontsource (Noto Sans Devanagari, Libre Baskerville, Tiro Devanagari Hindi).
+- **OpenAI:** images (`gpt-image-*`, generate + edit) and text (`gpt-5.4-mini` for the
+  principle prompt). Key in `application-local.yml` (see Secrets above).
 
-## How the code is organised (layered MVC)
+## How the backend is organised (`com.stotram`)
 
-`com.stotram` →
-- `controller/` — HTTP endpoints (`FeedController`, `AdminController`, `HelloController`).
-- `service/` — business logic (`FeedService`, `AdminReviewService`).
-- `repository/` — Spring Data JPA interfaces, one per table.
-- `model/` — JPA entities (one per table; Lombok for accessors).
-- `dto/` — API response shapes (`FeedResponse`, `CandidateResponse`, `GenerateResponse`).
-- `service/generation/` — the AI image pipeline: `ImageGenerator` (the vendor seam),
-  `GenerationService` (orchestration), `ImageStorage`/`LocalImageStorage`, and
-  `provider/` (`OpenAiImageGenerator`, `FakeImageGenerator`).
-- `config/` — `AsyncConfig`, the bounded `imageExecutor` pool.
+- `controller/` — `FeedController` (public), `AuthController` (login/me), `AdminController`
+  (review + edit), `BlockController` (blocks, generate, bulk), `PrincipleController`,
+  `PublishController` (publish now + schedule), `ApiErrorHandler` (`{message}` errors).
+- `security/` — `AdminUserDetailsService`, `AdminBootstrap` (admin from env vars),
+  `LoginRateLimiter` (5 failures/15 min per client).
+- `service/` — `FeedService`, `AdminReviewService`, `BlockService`.
+- `service/generation/` — `ImageGenerator` (vendor seam: generate, edit, models, paid,
+  `unavailableReason`), `GenerationService` (runs blocks on the bounded `imageExecutor`),
+  `ImageEditService`, `ImageStorage`/`LocalImageStorage`, `provider/` (`OpenAiImageGenerator`,
+  `FakeImageGenerator` — free placeholder for testing).
+- `service/prompting/PromptWriter` — principle prompt → N block prompts (OpenAI text model,
+  strict JSON schema).
+- `service/publish/` — `PublishService`, `PublishScheduler` (DB-driven cron, re-registered
+  live), `Watermarker`, `WatermarkBackfill`.
+- `config/` — `SecurityConfig`, `AsyncConfig` (`imageExecutor`, `publishTaskScheduler`),
+  `LocalMediaConfig` (serves `/images/**` from the storage dir on disk).
 
-## Data model (5 tables)
+## Data model
 
-`category`, `prompt_template`, `generation_batch`, `admin_user`, and `content_item` — the
-heart. A content item moves `GENERATED → APPROVED → PUBLISHED` (or `REJECTED`). Its `type`
-field (`IMAGE`, later `VIDEO`) is why videos can be added without schema surgery.
+`content_item` is the heart (status, `r2_key` = what's served, `original_key` = clean image,
+`edited_from_id`/`edit_prompt` for edits, `publish_date`). `prompt_template` = a generation
+**block** (name, category, language, prompt, model, image_count, active, archived).
+Also `category`, `generation_batch` (one run of a block, cost), `admin_user`,
+`publish_schedule` (singleton: enabled + cron + last run), `app_setting` (key/value:
+`principle_prompt`, `watermark_version`).
 
 ## What works today
 
-- **Public feed** — `GET /api/feed?lang=&category=&page=` returns published items, newest
-  first, paged. Each image `url` is built as `app.media.base-url` + `r2_key`.
-- **Admin review (the human gate)** — `GET /admin/candidates?status=`,
-  `POST /admin/candidates/{id}/approve`, `POST /admin/candidates/{id}/reject`.
-- **AI image generation** — `POST /admin/generate?category=&count=&lang=` returns **202** with
-  a batch id immediately, then generates images in parallel on a bounded background pool
-  (`imageExecutor`, 4 threads) and lands each as a `GENERATED` `content_item` for review.
-  One transaction per image, so a single failure never sinks the batch.
-- **Pluggable image providers** — `prompt_template.model` holds `provider:model-id`
-  (e.g. `openai:gpt-image-2`, or `fake` for a free local placeholder), so each category picks
-  its own vendor from data. Adding a provider is one class implementing `ImageGenerator`.
-  `OPENAI_API_KEY` comes from the environment — the repo is public, never commit a key.
+- **Public site:** Pinterest-style grid, morning/night tabs (defaults by time of day),
+  Hindi/English (brand name स्तोत्रम् / Stotrams), full-screen viewer with **Send on WhatsApp**
+  (Web Share API with a JPEG file; save-photo fallback); phone Back button closes the viewer.
+  Feed = `GET /api/feed?category=&page=` (no language filter: images are shared).
+- **Admin panel** (login required): generation blocks (add/edit/pause/delete, generate one
+  or all, model dropdown), principle prompt → drafts → bulk-create blocks, review queue
+  (To review / Approved / Live / Rejected, keys A/R/←/→), prompt-based edit, publish now +
+  daily auto-publish schedule.
+- **Watermark:** every published image gets lotus + "स्तोत्रम्" top-right (`Watermarker`,
+  Tiro Devanagari Hindi bundled in `resources/fonts`, OFL), re-encoded as ~450 KB JPEG under
+  `images/published/<Watermarker.VERSION>/...`. Fails → item stays APPROVED. **To change the
+  design: edit `Watermarker` and bump `VERSION`** — startup re-renders all live images (new
+  URLs, so no stale caches) and records it in `app_setting.watermark_version`.
+- **Image edits:** `POST /admin/candidates/{id}/edit` → OpenAI `/images/edits` with the clean
+  original (multipart via plain `MultiValueMap`; `MultipartBodyBuilder` needs Reactive
+  Streams, which isn't on the classpath). Default edit model gpt-image-1-mini (cheap, but it
+  redraws faces/details — use gpt-image-2 for iconography).
 
 ## The load-bearing indirection
 
-Image URLs are `app.media.base-url` + `r2_key`. Today the base is `http://localhost:9303`
-and images are local static files. Moving to Cloudflare R2/CDN later means uploading the
-same keys and changing one env var — **no code or data change**.
+Image URLs are `app.media.base-url` + `r2_key`. Locally the base is `http://localhost:5173`
+(through the Vite proxy) and images are files under `backend/src/main/resources/static`.
+Moving to Cloudflare R2/CDN means an `R2ImageStorage` with the same keys and one env var —
+no feed or data change.
 
 ## Stubbed / not built yet
 
-- `POST /admin/publish` returns **501** — needs watermark + resize + WebP + R2 upload.
-- **No prompt-template API.** Editing a prompt or switching a category's provider means raw
-  SQL against `prompt_template`. The entity says "editable from the admin panel"; the panel
-  and its endpoints don't exist yet.
-- **No watermark / WebP / resize**, so generated images are ~2.8MB and 1024×1536 rather than
-  the intended 1080×1350 — too heavy to ship to a mobile feed.
-- No **R2/CDN** yet (local static files stand in). `LocalImageStorage` writes into
-  `resources/static`, which works from source but not from a packaged jar.
-- No **security** on `/admin/**` yet (Spring Security + Cloudflare Access come later) —
-  and it now spends money.
-- No **scheduled** generation; manual trigger only.
-- `generation_batch.cost_usd` records $0 until `app.generation.openai.cost-per-image` is set.
-- `status`/`type`/`language` are plain strings (enums proposed, not yet done).
+- No **R2/CDN** yet; local files stand in (`LocalImageStorage` writes into
+  `src/main/resources/static`, fine from source, not from a jar). Clean originals are
+  reachable by direct URL until they move to a private bucket.
+- No **deployment** (VPS, domain, Cloudflare Access, `SESSION_COOKIE_SECURE=true`,
+  `CF-Connecting-IP` for the rate limiter).
+- No **scheduled generation** (publishing is scheduled; generating is manual).
+- Sessions are in memory — a backend restart logs the admin out.
+- `generation_batch.cost_usd` records $0 until `OPENAI_COST_PER_IMAGE` is set.
+- Images stay 1024×1536 (no 4:5 crop, no WebP).
+- `status`/`type`/`language` are plain strings (enums proposed, not done).
+

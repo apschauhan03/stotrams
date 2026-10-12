@@ -145,11 +145,22 @@ This contract is shared with the frontend via TypeScript types (`shared/` if mon
 ### Admin (behind Cloudflare Access + Spring Security)
 
 ```
-POST /admin/generate                      # kick off a batch manually (params: category, count)
+GET  /admin/blocks · /admin/blocks/options # generation blocks (prompt + category + lang + model + images/run)
+POST /admin/blocks · PUT/DELETE /admin/blocks/{id}   # manage blocks; DELETE archives
+POST /admin/blocks/bulk                   # create many blocks at once (shared settings + [{name, prompt}])
+GET/PUT /admin/principle                  # the saved principle prompt (master instruction)
+POST /admin/principle/write               # {prompt, count, category} -> LLM drafts N block prompts (not saved)
+POST /admin/blocks/{id}/generate          # run one block (202, images land as GENERATED)
+POST /admin/blocks/generate-all           # run every active block (max 200 images per click)
 GET  /admin/candidates?status=GENERATED   # thumbnails awaiting review
 POST /admin/candidates/{id}/approve
 POST /admin/candidates/{id}/reject
-POST /admin/publish                       # watermark + compress + R2 upload + feed rebuild for all APPROVED
+POST /admin/candidates/{id}/reject        # also takes a PUBLISHED item down from the feed
+POST /admin/candidates/{id}/edit          # {prompt, model?} -> NEW candidate edited from the clean original (sync, ~20-60 s)
+POST /admin/publish                       # "Publish now": all APPROVED -> PUBLISHED (publish_date = today IST)
+GET  /admin/publish/schedule              # auto-publish job: enabled, cron, next/last run
+PUT  /admin/publish/schedule              # {enabled, cron} — Spring 6-field cron, Asia/Kolkata; re-registers live
+POST /admin/login · GET /admin/me · POST /admin/logout
 ```
 
 ## 5. Security
@@ -157,7 +168,7 @@ POST /admin/publish                       # watermark + compress + R2 upload + f
 - **Public attack surface is tiny by design**: read-only endpoints, no user data, no PII. The one asset to protect is the write path (someone publishing offensive content to the audience).
 - All write endpoints live under `/admin/**`:
   - **Cloudflare Access** (free ≤50 users) in front of the admin hostname — Google login required before requests even reach the VPS.
-  - Plus Spring Security form login: single admin account, **bcrypt** hash in env var/config (never in code, never in git), session cookie, **rate-limited login** (e.g. 5 attempts → cooldown).
+  - Plus Spring Security session login (**built**): `POST /admin/login` with `{email, password}` → `STOTRAM_SESSION` cookie (HttpOnly, SameSite=Strict, Secure via `SESSION_COOKIE_SECURE=true` in prod). `GET /admin/me`, `POST /admin/logout`. Single admin from `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars, stored as a **bcrypt** row by `AdminBootstrap` on startup (never in git; change the env var + restart to rotate). **Rate-limited**: 5 failures per client → 15 min cooldown (429).
 - **VPS**: SSH key auth only, password login disabled (the #1 way small VPSes get owned).
 - **Secrets** (R2 keys, image-API key, DB password): env vars on the server only. The mobile/web clients contain zero secrets — they only read public URLs.
 

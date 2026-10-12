@@ -2,6 +2,12 @@ spring:
   application:
     name: stotram-server
 
+  config:
+    # Local secrets (OpenAI key, ...) live in application-local.yml next to this file:
+    # gitignored, blocked by the git hooks, and excluded from the packaged jar (pom.xml).
+    # Optional — the app starts fine without it. Its values override this file.
+    import: optional:classpath:application-local.yml
+
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/stotram}
     username: ${DB_USER:stotram}
@@ -22,8 +28,30 @@ spring:
 
 server:
   port: 9303
+  servlet:
+    session:
+      timeout: 12h
+      cookie:
+        name: STOTRAM_SESSION
+        http-only: true
+        # Strict: the browser never sends the admin session on a request started by another
+        # site. This is what stands in for CSRF tokens (see SecurityConfig). The site and
+        # api.<domain> are the same site, so the admin panel itself is unaffected.
+        same-site: strict
+        # true in production (HTTPS). Off locally because http://localhost has no TLS.
+        secure: ${SESSION_COOKIE_SECURE:false}
 
 app:
+  prompting:
+    # Text model that expands the admin's principle prompt into block prompts
+    # (PromptWriter). Uses the same OpenAI key as image generation.
+    model: ${OPENAI_TEXT_MODEL:gpt-5.4-mini}
+  admin:
+    # The one admin account, created/updated in admin_user on startup (AdminBootstrap).
+    # Environment only — this repo is public, so never put real values in this file.
+    # Unset = no admin exists and every /admin endpoint answers 401.
+    email: ${ADMIN_EMAIL:}
+    password: ${ADMIN_PASSWORD:}
   media:
     # Base URL that feed image URLs are built from.
     # Local now (images served from resources/static); swap to the CDN domain later.
@@ -42,16 +70,25 @@ app:
     # Final image dimensions (4:5 portrait, the WhatsApp-status shape).
     width: 1080
     height: 1350
+    # Preselected model for prompt-based edits (admin can switch per edit). The cheaper
+    # mini model is usually enough for small fixes (remove text, recolour, relight).
+    edit-default-model: ${EDIT_DEFAULT_MODEL:openai:gpt-image-1-mini}
     fake:
       # FakeImageGenerator only — pretend a provider call takes time, and fail sometimes
       # so the per-image error path is genuinely exercised rather than assumed.
       latency-ms: ${FAKE_LATENCY_MS:1500}
       failure-rate: ${FAKE_FAILURE_RATE:0.0}
     openai:
-      # From the environment only. This repo is public — a key committed here would be
-      # scraped within minutes of the push.
+      # NEVER put a real key in this file — the repo is public and a pushed key is scraped
+      # within minutes. Set it in application-local.yml (gitignored) or the
+      # OPENAI_API_KEY environment variable.
       api-key: ${OPENAI_API_KEY:}
       base-url: https://api.openai.com/v1
+      # Models offered in the admin panel's dropdown (first = default for new blocks).
+      # All confirmed available on the account via GET /v1/models on 2026-10-13.
+      # Others there (gpt-image-2.5-flare / -sunburst) are left out until cost and output
+      # are checked — add them here when wanted.
+      models: ${OPENAI_IMAGE_MODELS:gpt-image-2,gpt-image-1.5,gpt-image-1,gpt-image-1-mini}
       # Supported: 1024x1024, 1024x1536 (portrait), 1536x1024, 2048x2048, auto.
       # Not our 1080x1350 target — the resize happens later with watermarking. If arbitrary
       # sizes are accepted (multiples of 16), 1088x1360 is exactly 4:5 and worth trying.

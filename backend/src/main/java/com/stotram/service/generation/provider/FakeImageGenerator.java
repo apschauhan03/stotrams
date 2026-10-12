@@ -1,6 +1,7 @@
 package com.stotram.service.generation.provider;
 
 import com.stotram.service.generation.GeneratedImage;
+import com.stotram.service.generation.ImageEditRequest;
 import com.stotram.service.generation.ImageGenerationException;
 import com.stotram.service.generation.ImageGenerator;
 import com.stotram.service.generation.ImageRequest;
@@ -46,6 +47,16 @@ public class FakeImageGenerator implements ImageGenerator {
     }
 
     @Override
+    public String displayName() {
+        return "Fake placeholder (free, for testing)";
+    }
+
+    @Override
+    public boolean paid() {
+        return false;
+    }
+
+    @Override
     public GeneratedImage generate(ImageRequest request) {
         sleep();
         if (ThreadLocalRandom.current().nextDouble() < failureRate) {
@@ -63,6 +74,50 @@ public class FakeImageGenerator implements ImageGenerator {
         return new GeneratedImage(
                 out.toByteArray(), "image/png",
                 request.width(), request.height(), BigDecimal.ZERO);
+    }
+
+    @Override
+    public boolean supportsEdit() {
+        return true;
+    }
+
+    /** Free stand-in for an edit: the source image with an "EDITED" banner on top. */
+    @Override
+    public GeneratedImage edit(ImageEditRequest request) {
+        sleep();
+        BufferedImage source;
+        try {
+            source = ImageIO.read(new java.io.ByteArrayInputStream(request.image()));
+        } catch (IOException e) {
+            throw new ImageGenerationException("fake provider: could not read source image", e);
+        }
+        if (source == null) {
+            throw new ImageGenerationException("fake provider: unreadable source image");
+        }
+        int w = source.getWidth();
+        int h = source.getHeight();
+        BufferedImage image = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.drawImage(source, 0, 0, null);
+            g.setColor(new Color(0, 0, 0, 170));
+            g.fillRect(0, 0, w, h / 9);
+            g.setColor(Color.WHITE);
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, w / 22));
+            g.drawString("EDITED (placeholder)", w / 24, h / 22);
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, w / 36));
+            g.drawString(truncate(request.instruction()), w / 24, h / 12);
+        } finally {
+            g.dispose();
+        }
+        var out = new ByteArrayOutputStream();
+        try {
+            ImageIO.write(image, "png", out);
+        } catch (IOException e) {
+            throw new ImageGenerationException("fake provider: could not encode PNG", e);
+        }
+        return new GeneratedImage(out.toByteArray(), "image/png", w, h, BigDecimal.ZERO);
     }
 
     /** Gradient keyed off the prompt hash, so different prompts look different. */

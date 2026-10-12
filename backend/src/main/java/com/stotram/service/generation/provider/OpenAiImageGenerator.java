@@ -11,10 +11,17 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.stotram.service.generation.ImageEditRequest;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -42,8 +49,10 @@ public class OpenAiImageGenerator implements ImageGenerator {
     private final String quality;
     private final String outputFormat;
     private final BigDecimal costPerImage;
+    private final List<String> models;
 
     public OpenAiImageGenerator(
+            @Value("${app.generation.openai.models:gpt-image-2}") List<String> models,
             @Value("${app.generation.openai.api-key:}") String apiKey,
             @Value("${app.generation.openai.base-url:https://api.openai.com/v1}") String baseUrl,
             @Value("${app.generation.openai.size:1024x1536}") String size,
@@ -51,6 +60,7 @@ public class OpenAiImageGenerator implements ImageGenerator {
             @Value("${app.generation.openai.output-format:png}") String outputFormat,
             @Value("${app.generation.openai.cost-per-image:0}") BigDecimal costPerImage) {
 
+        this.models = models.stream().map(String::trim).filter(m -> !m.isEmpty()).toList();
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.size = size;
         this.quality = quality;
@@ -81,11 +91,28 @@ public class OpenAiImageGenerator implements ImageGenerator {
     }
 
     @Override
+    public String displayName() {
+        return "OpenAI";
+    }
+
+    @Override
+    public List<String> models() {
+        return models;
+    }
+
+    private static final String NO_KEY =
+            "OpenAI key is not set on the server: start the backend with OPENAI_API_KEY, "
+                    + "or switch this block's model to another provider.";
+
+    @Override
+    public Optional<String> unavailableReason() {
+        return apiKey.isBlank() ? Optional.of(NO_KEY) : Optional.empty();
+    }
+
+    @Override
     public GeneratedImage generate(ImageRequest request) {
         if (apiKey.isBlank()) {
-            throw new ImageGenerationException(
-                    "OPENAI_API_KEY is not set — export it and restart, or point the category's "
-                            + "prompt_template.model at another provider.");
+            throw new ImageGenerationException(NO_KEY);
         }
 
         // No response_format here: the gpt-image-* models reject it outright
@@ -99,13 +126,55 @@ public class OpenAiImageGenerator implements ImageGenerator {
                 "output_format", outputFormat,
                 "n", 1);
 
-        ImagesResponse response;
+        return toImage(call(() -> client.post()
+                .uri("/images/generations")
+                .header("Authorization", "Bearer " + apiKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)));
+    }
+
+    @Override
+    public boolean supportsEdit() {
+        return true;
+    }
+
+    /** {@code POST /images/edits}: same models, size and quality as generation. */
+    @Override
+    public GeneratedImage edit(ImageEditRequest request) {
+        if (apiKey.isBlank()) {
+            throw new ImageGenerationException(NO_KEY);
+        }
+        String extension = request.contentType().endsWith("jpeg") ? "jpg"
+                : request.contentType().substring(request.contentType().indexOf('/') + 1);
+        // Plain MultiValueMap, not MultipartBodyBuilder: the builder drags in Reactive Streams,
+        // which this servlet app doesn't ship.
+        var fileHeaders = new HttpHeaders();
+        fileHeaders.setContentType(MediaType.parseMediaType(request.contentType()));
+        var file = new ByteArrayResource(request.image()) {
+            @Override
+            public String getFilename() {
+                return "image." + extension;     // OpenAI needs a filename on the file part
+            }
+        };
+        MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
+        parts.add("image", new HttpEntity<>(file, fileHeaders));
+        parts.add("prompt", request.instruction());
+        parts.add("model", request.model());
+        parts.add("size", size);
+        parts.add("quality", quality);
+        parts.add("output_format", outputFormat);
+        parts.add("n", "1");
+
+        return toImage(call(() -> client.post()
+                .uri("/images/edits")
+                .header("Authorization", "Bearer " + apiKey)
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(parts)));
+    }
+
+    private ImagesResponse call(java.util.function.Supplier<RestClient.RequestBodySpec> request) {
         try {
-            response = client.post()
-                    .uri("/images/generations")
-                    .header("Authorization", "Bearer " + apiKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
+            return request.get()
                     .retrieve()
                     .onStatus(status -> status.isError(), (req, res) -> {
                         // Surface OpenAI's own message — "billing hard limit reached" and
@@ -121,7 +190,9 @@ public class OpenAiImageGenerator implements ImageGenerator {
         } catch (Exception e) {
             throw new ImageGenerationException("OpenAI request failed: " + e.getMessage(), e);
         }
+    }
 
+    private GeneratedImage toImage(ImagesResponse response) {
         if (response == null || response.data() == null || response.data().isEmpty()) {
             throw new ImageGenerationException("OpenAI returned no image data");
         }

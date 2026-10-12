@@ -1,5 +1,6 @@
 package com.stotram.service.generation;
 
+import com.stotram.dto.BlockOptionsResponse;
 import com.stotram.model.Category;
 import com.stotram.model.ContentItem;
 import com.stotram.model.GenerationBatch;
@@ -27,9 +28,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Runs a generation batch: N images for one category, in parallel, off the request thread.
+ * Runs a generation batch: one block's N images, in parallel, off the request thread.
  *
- * <p>The shape is deliberate. {@link #startBatch} does only the cheap synchronous work —
+ * <p>The shape is deliberate. {@link #startBlock} does only the cheap synchronous work —
  * validate, open a {@code generation_batch} row — then returns the batch id so the caller
  * can answer 202 immediately. The actual generation fans out onto {@code imageExecutor}
  * and finishes long after the HTTP response is gone; progress is observed through
@@ -43,8 +44,11 @@ public class GenerationService {
 
     private static final Logger log = LoggerFactory.getLogger(GenerationService.class);
 
-    /** Guard-rail: a typo in {@code count} spends real money against a real provider. */
-    private static final int MAX_COUNT = 50;
+    /** Guard-rail: a typo in a block's image count spends real money against a real provider. */
+    public static final int MAX_COUNT = 50;
+
+    /** Guard-rail for "Generate all": the most images one click may request in total. */
+    public static final int MAX_TOTAL = 200;
 
     private final CategoryRepository categories;
     private final PromptTemplateRepository prompts;
@@ -81,35 +85,87 @@ public class GenerationService {
     }
 
     /**
-     * Opens a batch and starts generating. Returns as soon as the batch row exists —
-     * the images are still being made when this returns.
+     * Runs one block: opens a batch for {@code block.imageCount} images and starts generating.
+     * Returns as soon as the batch row exists — the images are still being made.
      */
-    public GenerationBatch startBatch(String categorySlug, int count, String language) {
+    public GenerationBatch startBlock(Long blockId) {
+        PromptTemplate block = prompts.findById(blockId)
+                .filter(b -> !b.isArchived())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No block with id " + blockId));
+        return start(block);
+    }
+
+    /** Runs every active block. Refused as a whole if the total is over {@link #MAX_TOTAL}. */
+    public List<GenerationBatch> startAllActive() {
+        List<PromptTemplate> blocks = prompts.findByArchivedFalseAndActiveTrueOrderBySortOrderAscIdAsc();
+        if (blocks.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "No active blocks to generate");
+        }
+        int total = blocks.stream().mapToInt(PromptTemplate::getImageCount).sum();
+        if (total > MAX_TOTAL) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Active blocks add up to %d images; one run may make at most %d".formatted(total, MAX_TOTAL));
+        }
+        // Check every block's provider first, so one that can't run fails the whole request
+        // before any money is spent on the others.
+        blocks.forEach(b -> requireReady(b, resolveGenerator(b.getModel())));
+        return blocks.stream().map(this::start).toList();
+    }
+
+    /**
+     * Every model a block can pick, for the admin dropdown: paid providers first (the real
+     * thing), free test providers last. A provider without a model list is one entry.
+     */
+    public List<BlockOptionsResponse.ModelOption> modelOptions() {
+        return generators.values().stream()
+                .sorted(java.util.Comparator.comparing((ImageGenerator g) -> !g.paid())
+                        .thenComparing(ImageGenerator::providerId))
+                .flatMap(g -> {
+                    String reason = g.unavailableReason().orElse(null);
+                    if (g.models().isEmpty()) {
+                        return java.util.stream.Stream.of(new BlockOptionsResponse.ModelOption(
+                                g.providerId(), g.displayName(), g.paid(), reason == null, reason, g.supportsEdit()));
+                    }
+                    return g.models().stream().map(m -> new BlockOptionsResponse.ModelOption(
+                            g.providerId() + ":" + m, g.displayName() + " · " + m, g.paid(), reason == null, reason,
+                            g.supportsEdit()));
+                })
+                .toList();
+    }
+
+    /** The provider a {@code provider:model} value selects; 400 if none is installed. */
+    public ImageGenerator generatorFor(String model) {
+        validateModel(model);
+        return resolveGenerator(model);
+    }
+
+    /** Throws 400 when {@code model} names no installed provider. */
+    public void validateModel(String model) {
+        try {
+            resolveGenerator(model);
+        } catch (ResponseStatusException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getReason());
+        }
+    }
+
+    private GenerationBatch start(PromptTemplate block) {
+        int count = block.getImageCount();
         if (count < 1 || count > MAX_COUNT) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "count must be between 1 and " + MAX_COUNT);
+                    "Image count must be between 1 and " + MAX_COUNT);
         }
-
-        Category category = categories.findBySlug(categorySlug)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "No category with slug " + categorySlug));
-
-        PromptTemplate template = prompts.findByCategory_SlugAndActiveTrue(categorySlug).stream()
-                .findFirst()
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
-                        "No active prompt template for category " + categorySlug));
-
-        ImageGenerator generator = resolveGenerator(template.getModel());
+        ImageGenerator generator = resolveGenerator(block.getModel());
+        requireReady(block, generator);
 
         GenerationBatch batch = new GenerationBatch();
-        batch.setPromptTemplate(template);
+        batch.setPromptTemplate(block);
         batch.setRequestedCount(count);
         batches.save(batch);
 
-        log.info("Batch {}: generating {} image(s) for '{}' via provider '{}'",
-                batch.getId(), count, categorySlug, generator.providerId());
+        log.info("Batch {}: generating {} image(s) for block '{}' ({}) via provider '{}'",
+                batch.getId(), count, block.getName(), block.getCategory().getSlug(), generator.providerId());
 
-        fanOut(batch.getId(), category.getId(), template, generator, count, language);
+        fanOut(batch.getId(), block.getCategory().getId(), block, generator, count, block.getLanguage());
         return batch;
     }
 
@@ -170,6 +226,14 @@ public class GenerationService {
         return generated.costUsd() == null ? BigDecimal.ZERO : generated.costUsd();
     }
 
+    /** Refuses (409) to start a block whose provider can't run, e.g. OpenAI with no key. */
+    private static void requireReady(PromptTemplate block, ImageGenerator generator) {
+        generator.unavailableReason().ifPresent(reason -> {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Block \"%s\" can't run: %s".formatted(block.getName(), reason));
+        });
+    }
+
     /** Sums cost across the batch once every image has settled. */
     private void finalizeBatch(Long batchId, int requested, List<CompletableFuture<BigDecimal>> tasks) {
         List<BigDecimal> costs = tasks.stream()
@@ -211,7 +275,7 @@ public class GenerationService {
         return colon < 0 ? modelColumn.trim() : modelColumn.substring(0, colon).trim();
     }
 
-    private String modelIdOf(String modelColumn) {
+    static String modelIdOf(String modelColumn) {
         if (modelColumn == null || modelColumn.isBlank()) {
             return "fake";
         }

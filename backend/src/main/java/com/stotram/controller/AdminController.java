@@ -1,13 +1,13 @@
 package com.stotram.controller;
 
 import com.stotram.dto.CandidateResponse;
-import com.stotram.dto.GenerateResponse;
-import com.stotram.model.GenerationBatch;
+import com.stotram.dto.EditRequest;
 import com.stotram.service.AdminReviewService;
-import com.stotram.service.generation.GenerationService;
+import com.stotram.service.generation.ImageEditService;
 import java.util.List;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,19 +16,19 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Admin API: the generate -> review -> publish workflow (README section 4).
- * Will sit behind Cloudflare Access + Spring Security later.
+ * Admin API: the review queue. Generation lives in {@link BlockController}, publishing in
+ * {@link PublishController}. Login-protected by SecurityConfig.
  */
 @RestController
 @RequestMapping("/admin")
 public class AdminController {
 
     private final AdminReviewService reviewService;
-    private final GenerationService generationService;
+    private final ImageEditService editService;
 
-    public AdminController(AdminReviewService reviewService, GenerationService generationService) {
+    public AdminController(AdminReviewService reviewService, ImageEditService editService) {
         this.reviewService = reviewService;
-        this.generationService = generationService;
+        this.editService = editService;
     }
 
     /** Thumbnails awaiting review; defaults to the GENERATED queue. */
@@ -49,32 +49,13 @@ public class AdminController {
     }
 
     /**
-     * Kick off a generation batch. Returns 202 as soon as the batch row exists — the images
-     * are generated on a background pool and land in the review queue as they finish, so
-     * poll {@code GET /candidates?status=GENERATED} to watch progress.
+     * Edit an image with a prompt. Waits for the provider (~30–60 s) and returns the NEW
+     * candidate — the source is left untouched. Costs money with a real provider.
      */
-    @PostMapping("/generate")
-    public ResponseEntity<GenerateResponse> generate(
-            @RequestParam String category,
-            @RequestParam(defaultValue = "25") int count,
-            @RequestParam(defaultValue = "hi") String lang) {
-
-        GenerationBatch batch = generationService.startBatch(category, count, lang);
-
-        return ResponseEntity.accepted().body(new GenerateResponse(
-                batch.getId(),
-                category,
-                count,
-                "Generation started. Poll GET /admin/candidates?status=GENERATED to watch images land."));
-    }
-
-    /**
-     * Publish all APPROVED items. Stubbed: needs watermark + WebP + R2 upload
-     * + feed rebuild (deferred until we set up media/CDN).
-     */
-    @PostMapping("/publish")
-    public ResponseEntity<String> publish() {
-        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
-                .body("publish not implemented yet: needs watermark + WebP + R2 upload");
+    @PostMapping("/candidates/{id}/edit")
+    @ResponseStatus(HttpStatus.CREATED)
+    public CandidateResponse edit(@PathVariable Long id, @RequestBody(required = false) EditRequest body) {
+        var copy = editService.edit(id, body == null ? null : body.prompt(), body == null ? null : body.model());
+        return reviewService.toCandidate(copy);
     }
 }
