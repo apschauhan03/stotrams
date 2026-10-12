@@ -1,0 +1,36 @@
+#!/bin/sh
+# Refuses commits that would leak secrets. This repo is public: a pushed key is scraped
+# within minutes. Installed with:  git config core.hooksPath .githooks
+#
+# Blocks:
+#   1. any application-local.* file (local secrets, in backend/src/main/resources)
+#   2. any .env file
+#   3. added lines that look like an API key (OpenAI sk-..., AWS AKIA..., private keys)
+#
+# Matched lines are never printed, so the secret doesn't end up in terminal scrollback.
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+blocked_files=$(printf '%s\n' "$staged" | grep -E '(^|/)(application-local\.(yml|yaml|properties)|\.env(\..*)?)$')
+if [ -n "$blocked_files" ]; then
+    echo "COMMIT BLOCKED: these files hold local secrets and must never be committed:" >&2
+    printf '  %s\n' $blocked_files >&2
+    echo "Unstage them with: git restore --staged <file>" >&2
+    exit 1
+fi
+
+key_pattern='sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+leaky=""
+for f in $staged; do
+    if git diff --cached -U0 -- "$f" | grep -E '^\+' | grep -qE "$key_pattern"; then
+        leaky="$leaky $f"
+    fi
+done
+if [ -n "$leaky" ]; then
+    echo "COMMIT BLOCKED: something that looks like an API key is being added in:" >&2
+    printf '  %s\n' $leaky >&2
+    echo "Move it to backend/src/main/resources/application-local.yml (gitignored) or an env var." >&2
+    exit 1
+fi
+
+exit 0

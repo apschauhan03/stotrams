@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 @Configuration
 public class AsyncConfig {
@@ -42,5 +43,20 @@ public class AsyncConfig {
         executor.setAwaitTerminationSeconds(60);
         executor.initialize();
         return executor;
+    }
+
+    /**
+     * Runs the auto-publish job (PublishScheduler). One thread: there is one job, and two
+     * publishes overlapping would be pointless.
+     */
+    @Bean("publishTaskScheduler")
+    public ThreadPoolTaskScheduler publishTaskScheduler() {
+        var scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("publish-");
+        scheduler.setWaitForTasksToCompleteOnShutdown(true);
+        scheduler.setAwaitTerminationSeconds(30);
+        scheduler.initialize();
+        return scheduler;
     }
 }

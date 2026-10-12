@@ -49,6 +49,21 @@ public class ContentItem {
     @Column(name = "r2_key", nullable = false, unique = true)
     private String r2Key;
 
+    /**
+     * The clean image as generated, before watermarking. Set at publish time, when r2Key
+     * moves to the watermarked copy; null until the item has been published once.
+     */
+    @Column(name = "original_key")
+    private String originalKey;
+
+    /** For an edited copy: the item it was edited from. Null for a fresh generation. */
+    @Column(name = "edited_from_id")
+    private Long editedFromId;
+
+    /** For an edited copy: the instruction that produced it. */
+    @Column(name = "edit_prompt", columnDefinition = "text")
+    private String editPrompt;
+
     private Integer width;
 
     private Integer height;

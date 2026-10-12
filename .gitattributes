@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings: with CRLF, "#!/bin/sh" scripts fail to run on
+# Windows/Git Bash — which would silently disable the secret-blocking git hooks.
+.githooks/* text eol=lf
+*.sh        text eol=lf

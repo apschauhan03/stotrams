@@ -13,6 +13,10 @@ import org.springframework.web.server.ResponseStatusException;
 /**
  * The human-review step: list generated candidates and approve/reject them.
  * This is the non-negotiable gate before anything is published (README section 2).
+ *
+ * <p>Approving queues an item for publishing (PublishService puts it live, on schedule or
+ * via "Publish now"). Rejecting works from any state — including PUBLISHED, which takes the
+ * item down from the public feed at once.
  */
 @Service
 public class AdminReviewService {
@@ -37,6 +41,9 @@ public class AdminReviewService {
     @Transactional
     public CandidateResponse approve(Long id) {
         ContentItem item = require(id);
+        if ("PUBLISHED".equals(item.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Item " + id + " is already live");
+        }
         item.setStatus("APPROVED");
         return toCandidate(item);
     }
@@ -45,6 +52,7 @@ public class AdminReviewService {
     public CandidateResponse reject(Long id) {
         ContentItem item = require(id);
         item.setStatus("REJECTED");
+        item.setPublishedAt(null);      // taken down, if it was live
         return toCandidate(item);
     }
 
@@ -54,7 +62,7 @@ public class AdminReviewService {
                         HttpStatus.NOT_FOUND, "No content item with id " + id));
     }
 
-    private CandidateResponse toCandidate(ContentItem c) {
+    public CandidateResponse toCandidate(ContentItem c) {
         return new CandidateResponse(
                 c.getId(),
                 mediaBaseUrl + "/" + c.getR2Key(),
@@ -62,6 +70,8 @@ public class AdminReviewService {
                 c.getCategory().getSlug(),
                 c.getLanguage(),
                 c.getWidth(),
-                c.getHeight());
+                c.getHeight(),
+                c.getEditedFromId(),
+                c.getEditPrompt());
     }
 }

@@ -1,0 +1,41 @@
+#!/bin/sh
+# Last line of defence before anything reaches the public GitHub repo: refuses a push if
+# any outgoing commit adds a local-secrets file or something that looks like an API key —
+# even if it was committed with --no-verify or from a tool that skips pre-commit.
+# Installed with:  git config core.hooksPath .githooks
+
+zero=0000000000000000000000000000000000000000
+key_pattern='sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+secret_files='(^|/)(application-local\.(yml|yaml|properties)|\.env(\..*)?)$'
+
+blocked() {
+    echo "PUSH BLOCKED: $1" >&2
+    exit 1
+}
+
+while read local_ref local_sha remote_ref remote_sha; do
+    remote_sha=$(printf '%s' "$remote_sha" | tr -d '\r')   # tolerate CRLF input on Windows
+    [ "$local_sha" = "$zero" ] && continue                  # deleting a remote branch
+    if [ "$remote_sha" = "$zero" ]; then
+        range="$local_sha --not --remotes"                  # new branch: commits not on any remote yet
+    else
+        range="$remote_sha..$local_sha"
+    fi
+
+    # Fail closed: if the outgoing commits can't be read, refuse rather than wave them through.
+    names=$(git log --name-only --format= $range) || blocked "could not inspect outgoing commits ($range)"
+    patch=$(git log -p --format= $range) || blocked "could not inspect outgoing commits ($range)"
+
+    files=$(printf '%s\n' "$names" | grep -E "$secret_files" | sort -u)
+    if [ -n "$files" ]; then
+        echo "PUSH BLOCKED: outgoing commits contain local-secret files:" >&2
+        printf '  %s\n' $files >&2
+        exit 1
+    fi
+
+    if printf '%s\n' "$patch" | grep -E '^\+' | grep -qE "$key_pattern"; then
+        blocked "an outgoing commit adds something that looks like an API key. Find it with: git log -p $remote_ref..$local_ref"
+    fi
+done
+
+exit 0

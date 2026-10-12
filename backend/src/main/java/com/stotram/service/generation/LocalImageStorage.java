@@ -9,10 +9,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * Writes images to the local filesystem under {@code resources/static}, where Spring
- * already serves them: a key of {@code images/good-morning/2026-08-07/x.png} lands at
+ * Writes images to the local filesystem under {@code resources/static}: a key of
+ * {@code images/good-morning/2026-08-07/x.png} lands at
  * {@code static/images/good-morning/2026-08-07/x.png} and is reachable at
- * {@code http://localhost:9303/images/good-morning/2026-08-07/x.png}.
+ * {@code http://localhost:9303/images/good-morning/2026-08-07/x.png} — served from this same
+ * directory by {@code LocalMediaConfig}, so new images are visible immediately.
  *
  * <p><b>TODO: this needs to be a CDN.</b> Replace this class with an {@code R2ImageStorage}
  * that uploads the same bytes to the Cloudflare R2 bucket under the <i>same key</i>, then
@@ -38,11 +39,26 @@ public class LocalImageStorage implements ImageStorage {
     }
 
     @Override
-    public void store(String key, byte[] bytes) {
-        Path target = root.resolve(key).normalize();
-        if (!target.startsWith(root)) {
+    public byte[] read(String key) {
+        Path source = resolve(key);
+        try {
+            return Files.readAllBytes(source);
+        } catch (IOException e) {
+            throw new ImageStorageException("Could not read image for key " + key, e);
+        }
+    }
+
+    private Path resolve(String key) {
+        Path path = root.resolve(key).normalize();
+        if (!path.startsWith(root)) {
             throw new ImageStorageException("Key escapes the storage root: " + key, null);
         }
+        return path;
+    }
+
+    @Override
+    public void store(String key, byte[] bytes) {
+        Path target = resolve(key);
         try {
             Files.createDirectories(target.getParent());
             Files.write(target, bytes);

@@ -21,4 +21,12 @@ public interface ImageStorage {
      * @throws ImageStorageException if the write failed
      */
     void store(String key, byte[] bytes);
+
+    /**
+     * Reads the bytes at {@code key} (the publish step reads the clean original to stamp
+     * the watermark onto it).
+     *
+     * @throws ImageStorageException if the object is missing or unreadable
+     */
+    byte[] read(String key);
 }
