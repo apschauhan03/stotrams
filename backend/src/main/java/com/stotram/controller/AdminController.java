@@ -3,10 +3,15 @@ package com.stotram.controller;
 import com.stotram.dto.CandidateResponse;
 import com.stotram.dto.EditRequest;
 import com.stotram.service.AdminReviewService;
+import com.stotram.service.VideoUploadService;
 import com.stotram.service.generation.ImageEditService;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,28 +19,42 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Admin API: the review queue. Generation lives in {@link BlockController}, publishing in
- * {@link PublishController}. Login-protected by SecurityConfig.
+ * Admin API: the review queue and manual video upload. Generation lives in
+ * {@link BlockController}, publishing in {@link PublishController}. Login-protected by
+ * SecurityConfig.
  */
 @RestController
 @RequestMapping("/admin")
 public class AdminController {
 
+    private static final Set<String> TYPES = Set.of("IMAGE", "VIDEO");
+
     private final AdminReviewService reviewService;
     private final ImageEditService editService;
+    private final VideoUploadService videoUploadService;
 
-    public AdminController(AdminReviewService reviewService, ImageEditService editService) {
+    public AdminController(AdminReviewService reviewService,
+                           ImageEditService editService,
+                           VideoUploadService videoUploadService) {
         this.reviewService = reviewService;
         this.editService = editService;
+        this.videoUploadService = videoUploadService;
     }
 
-    /** Thumbnails awaiting review; defaults to the GENERATED queue. */
+    /** Thumbnails awaiting review; defaults to the GENERATED queue of images. */
     @GetMapping("/candidates")
     public List<CandidateResponse> candidates(
-            @RequestParam(defaultValue = "GENERATED") String status) {
-        return reviewService.candidates(status);
+            @RequestParam(defaultValue = "GENERATED") String status,
+            @RequestParam(defaultValue = "IMAGE") String type) {
+        String mediaType = type.toUpperCase(Locale.ROOT);
+        if (!TYPES.contains(mediaType)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "type must be IMAGE or VIDEO");
+        }
+        return reviewService.candidates(status, mediaType);
     }
 
     @PostMapping("/candidates/{id}/approve")
@@ -57,5 +76,16 @@ public class AdminController {
     public CandidateResponse edit(@PathVariable Long id, @RequestBody(required = false) EditRequest body) {
         var copy = editService.edit(id, body == null ? null : body.prompt(), body == null ? null : body.model());
         return reviewService.toCandidate(copy);
+    }
+
+    /** Upload a video by hand; it lands in the video review queue (GENERATED). */
+    @PostMapping(path = "/videos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public CandidateResponse uploadVideo(@RequestPart("file") MultipartFile file,
+                                         @RequestParam String category,
+                                         @RequestParam String lang,
+                                         @RequestParam(required = false) Integer width,
+                                         @RequestParam(required = false) Integer height) {
+        return reviewService.toCandidate(videoUploadService.upload(file, category, lang, width, height));
     }
 }

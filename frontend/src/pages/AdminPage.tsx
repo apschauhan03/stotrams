@@ -13,10 +13,11 @@ import {
   rejectCandidate,
   updatePublishSchedule,
 } from '../api/client';
-import type { AdminSession, Candidate, CandidateStatus, PublishSchedule } from '../api/types';
+import type { AdminSession, Candidate, CandidateStatus, MediaType, PublishSchedule } from '../api/types';
 import { LotusMark } from '../components/LotusMark';
 import { BlocksPanel } from './admin/BlocksPanel';
 import { canApprove, ReviewLightbox } from './admin/ReviewLightbox';
+import { VideoUploadPanel } from './admin/VideoUploadPanel';
 
 // Admin is an internal tool for one person, so it's English-only and denser than the
 // public site. Access is enforced by the backend (Spring Security session on /admin/**);
@@ -30,6 +31,20 @@ const STATUS_LABEL: Record<CandidateStatus, string> = {
   PUBLISHED: 'Live on site',
   REJECTED: 'Rejected',
 };
+const MEDIA_TYPES: { type: MediaType; label: string }[] = [
+  { type: 'image', label: '🖼️ Photos' },
+  { type: 'video', label: '🎬 Videos' },
+];
+const MEDIA_TYPE_KEY = 'stotram.admin.mediaType';
+
+function savedMediaType(): MediaType {
+  try {
+    return localStorage.getItem(MEDIA_TYPE_KEY) === 'video' ? 'video' : 'image';
+  } catch {
+    return 'image';
+  }
+}
+
 const POLL_MS = 3000;
 const POLL_FOR_MS = 3 * 60_000;
 
@@ -134,6 +149,15 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: (session: AdminSession) => vo
 }
 
 function AdminPanel({ session, onSignedOut }: { session: AdminSession; onSignedOut: () => void }) {
+  const [mediaType, setMediaTypeState] = useState<MediaType>(savedMediaType);
+  const setMediaType = (next: MediaType) => {
+    setMediaTypeState(next);
+    try {
+      localStorage.setItem(MEDIA_TYPE_KEY, next);
+    } catch {
+      // Not remembered across reloads; the toggle still works.
+    }
+  };
   const [status, setStatus] = useState<CandidateStatus>('GENERATED');
   const [items, setItems] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,6 +176,8 @@ function AdminPanel({ session, onSignedOut }: { session: AdminSession; onSignedO
   useEffect(() => onDemoModeChange(setDemo), []);
 
   const [counts, setCounts] = useState<Partial<Record<CandidateStatus, number>>>({});
+  // "Publish now" publishes approved photos AND videos, so its count covers both.
+  const [otherApproved, setOtherApproved] = useState(0);
 
   /** A 401 mid-session (expired, or logged out elsewhere) sends us back to the login form. */
   const fail = useCallback(
@@ -172,8 +198,13 @@ function AdminPanel({ session, onSignedOut }: { session: AdminSession; onSignedO
       if (!quiet) setLoading(true);
       try {
         // All four queues at once: the current tab's items, plus counts for every tab badge.
-        const lists = await Promise.all(STATUSES.map((s) => fetchCandidates(s)));
+        const otherType: MediaType = mediaType === 'image' ? 'video' : 'image';
+        const [lists, other] = await Promise.all([
+          Promise.all(STATUSES.map((s) => fetchCandidates(s, mediaType))),
+          fetchCandidates('APPROVED', otherType),
+        ]);
         setCounts(Object.fromEntries(STATUSES.map((s, i) => [s, lists[i].length])));
+        setOtherApproved(other.length);
         const list = lists[STATUSES.indexOf(status)];
         setItems(list);
         setError(null);
@@ -191,7 +222,7 @@ function AdminPanel({ session, onSignedOut }: { session: AdminSession; onSignedO
         setLoading(false);
       }
     },
-    [status, fail],
+    [status, mediaType, fail],
   );
 
   useEffect(() => {
@@ -252,16 +283,40 @@ function AdminPanel({ session, onSignedOut }: { session: AdminSession; onSignedO
       <div className="admin__body">
         {demo && <p className="demo-banner">Demo mode: backend not reachable, changes are in-memory only.</p>}
 
-        <BlocksPanel
-          onUnauthorized={onSignedOut}
-          onGenerated={() => {
-            setStatus('GENERATED');
-            setPollUntil(Date.now() + POLL_FOR_MS);
-          }}
-        />
+        <nav className="media-toggle" aria-label="Content type">
+          {MEDIA_TYPES.map(({ type, label }) => (
+            <button
+              key={type}
+              type="button"
+              className={`media-toggle__option${type === mediaType ? ' media-toggle__option--active' : ''}`}
+              aria-pressed={type === mediaType}
+              onClick={() => setMediaType(type)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {mediaType === 'image' ? (
+          <BlocksPanel
+            onUnauthorized={onSignedOut}
+            onGenerated={() => {
+              setStatus('GENERATED');
+              setPollUntil(Date.now() + POLL_FOR_MS);
+            }}
+          />
+        ) : (
+          <VideoUploadPanel
+            onUnauthorized={onSignedOut}
+            onUploaded={() => {
+              if (status !== 'GENERATED') setStatus('GENERATED'); // reloads via the effect
+              else load(true);
+            }}
+          />
+        )}
 
         <PublishPanel
-          approvedCount={counts.APPROVED ?? 0}
+          approvedCount={(counts.APPROVED ?? 0) + otherApproved}
           onPublished={() => load(true)}
           onUnauthorized={onSignedOut}
         />
@@ -295,7 +350,7 @@ function AdminPanel({ session, onSignedOut }: { session: AdminSession; onSignedO
 
           {status === 'GENERATED' && items.length > 0 && (
             <p className="admin__muted">
-              Tip: open an image to check details full-size. Keys: <kbd>A</kbd> approve, <kbd>R</kbd> reject,{' '}
+              Tip: open {mediaType === 'video' ? 'a video to watch it' : 'an image to check details'} full-size. Keys: <kbd>A</kbd> approve, <kbd>R</kbd> reject,{' '}
               <kbd>←</kbd>/<kbd>→</kbd> move, <kbd>Esc</kbd> close.
             </p>
           )}
@@ -304,7 +359,17 @@ function AdminPanel({ session, onSignedOut }: { session: AdminSession; onSignedO
             {items.map((item, index) => (
               <li key={item.id} className="admin__card">
                 <button type="button" className="admin__thumb" onClick={() => setPreviewIndex(index)}>
-                  <img src={item.url} alt={`Candidate ${item.id}`} loading="lazy" />
+                  {item.type === 'video' ? (
+                    <>
+                      {/* #t=0.1 makes phones paint the first frame as the thumbnail. */}
+                      <video src={`${item.url}#t=0.1`} muted playsInline preload="metadata" />
+                      <span className="admin__play" aria-hidden="true">
+                        ▶
+                      </span>
+                    </>
+                  ) : (
+                    <img src={item.url} alt={`Candidate ${item.id}`} loading="lazy" />
+                  )}
                 </button>
                 <div className="admin__meta">
                   <span>
@@ -431,7 +496,7 @@ function PublishPanel({
       const live =
         res.published === 0
           ? 'Nothing was published.'
-          : `${res.published} image${res.published === 1 ? ' is' : 's are'} now live, with the स्तोत्रम् watermark.`;
+          : `${res.published} item${res.published === 1 ? ' is' : 's are'} now live (photos with the स्तोत्रम् watermark).`;
       setPublishMessage(
         res.failed > 0
           ? {
@@ -478,8 +543,8 @@ function PublishPanel({
       <div className="publish">
         <div className="publish__now">
           <p className="admin__muted">
-            Puts every approved image on the public site as today's content, stamped with the स्तोत्रम्
-            watermark.
+            Puts every approved photo and video on the public site as today's content. Photos are stamped
+            with the स्तोत्रम् watermark; videos go up as uploaded.
           </p>
           <button
             type="button"
@@ -490,7 +555,7 @@ function PublishPanel({
             {publishing ? 'Publishing…' : `Publish now (${approvedCount} approved)`}
           </button>
           {approvedCount === 0 && !publishMessage && (
-            <p className="admin__muted">Approve images first, then publish them here.</p>
+            <p className="admin__muted">Approve photos or videos first, then publish them here.</p>
           )}
           {publishMessage && (
             <p className={publishMessage.error ? 'admin__error' : 'admin__success'}>{publishMessage.text}</p>

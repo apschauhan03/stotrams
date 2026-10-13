@@ -75,7 +75,11 @@ export function ReviewLightbox({
         </p>
       )}
       <div className="viewer__stage">
-        <img className="viewer__img" src={item.url} alt={`Candidate ${item.id}`} />
+        {item.type === 'video' ? (
+          <video key={item.id} className="viewer__img" src={item.url} controls autoPlay muted loop playsInline />
+        ) : (
+          <img className="viewer__img" src={item.url} alt={`Candidate ${item.id}`} />
+        )}
       </div>
       <div className="viewer__actions viewer__actions--row">
         {canApprove(item) && (
@@ -89,7 +93,9 @@ export function ReviewLightbox({
           </button>
         )}
       </div>
-      <EditBox key={item.id} item={item} onEdited={onEdited} onUnauthorized={onUnauthorized} />
+      {item.type === 'image' && (
+        <EditBox key={item.id} item={item} onEdited={onEdited} onUnauthorized={onUnauthorized} />
+      )}
     </div>
   );
 }

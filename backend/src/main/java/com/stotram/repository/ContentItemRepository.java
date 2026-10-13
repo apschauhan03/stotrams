@@ -13,6 +13,9 @@ public interface ContentItemRepository extends JpaRepository<ContentItem, Long> 
     /** Admin review queue: items in a given status (e.g. GENERATED), newest first. */
     List<ContentItem> findByStatusOrderByIdDesc(String status);
 
+    /** The same queue for one media type (IMAGE or VIDEO): the admin's photo/video toggle. */
+    List<ContentItem> findByStatusAndTypeOrderByIdDesc(String status, String type);
+
     /**
      * Public feed: published items for an optional category/language, newest first.
      * A null filter means "any".

@@ -18,10 +18,12 @@ import type {
   FeedResponse,
   GenerateResponse,
   Lang,
+  MediaType,
+  Panchang,
   Principle,
-  PromptDraft,
   PublishResult,
   PublishSchedule,
+  WriteResult,
 } from './types';
 
 const API_BASE: string = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? '/backend' : '');
@@ -100,6 +102,18 @@ export function fetchFeed(lang: Lang, category: CategorySlug, page: number): Pro
   );
 }
 
+/**
+ * A day's panchang (computed on the server); `date` yyyy-mm-dd, default today in India.
+ * Null in demo mode: there's nothing to compute it.
+ */
+export function fetchPanchang(date?: string): Promise<Panchang | null> {
+  const qs = date ? `?${new URLSearchParams({ date })}` : '';
+  return withFallback(
+    () => request<Panchang>(`/api/panchang${qs}`),
+    async () => null,
+  );
+}
+
 // ---- Admin session (POST /admin/login sets an HttpOnly session cookie) --------------
 
 export function fetchAdminSession(): Promise<AdminSession> {
@@ -128,10 +142,34 @@ export function logout(): Promise<void> {
   );
 }
 
-export function fetchCandidates(status: CandidateStatus): Promise<Candidate[]> {
+export function fetchCandidates(status: CandidateStatus, type: MediaType): Promise<Candidate[]> {
   return withFallback(
-    () => request<Candidate[]>(`/admin/candidates?status=${status}`),
-    () => mock.mockCandidates(status),
+    () => request<Candidate[]>(`/admin/candidates?status=${status}&type=${type.toUpperCase()}`),
+    () => mock.mockCandidates(status, type),
+  );
+}
+
+/**
+ * Uploads a video into the video review queue (it still needs approving and publishing).
+ * `width`/`height` are read from the file in the browser, null if that failed.
+ */
+export function uploadVideo(
+  file: File,
+  category: CategorySlug,
+  lang: Lang,
+  size: { width: number; height: number } | null,
+): Promise<Candidate> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('category', category);
+  form.append('lang', lang);
+  if (size) {
+    form.append('width', String(size.width));
+    form.append('height', String(size.height));
+  }
+  return withFallback(
+    () => request<Candidate>('/admin/videos', { method: 'POST', body: form }),
+    () => mock.mockUploadVideo(file, category, lang, size),
   );
 }
 
@@ -239,6 +277,11 @@ export function fetchPrinciple(): Promise<Principle> {
   return withFallback(() => request<Principle>('/admin/principle'), () => mock.mockPrinciple());
 }
 
+/** Forgets the saved master prompt; the built-in default is used again. */
+export function resetPrinciple(): Promise<Principle> {
+  return withFallback(() => request<Principle>('/admin/principle', { method: 'DELETE' }), () => mock.mockSavePrinciple(''));
+}
+
 export function savePrinciple(prompt: string): Promise<Principle> {
   return withFallback(
     () => request<Principle>('/admin/principle', json('PUT', { prompt })),
@@ -246,13 +289,30 @@ export function savePrinciple(prompt: string): Promise<Principle> {
   );
 }
 
-/** Saves the principle and asks the text model for `count` draft prompts (nothing else saved). */
-export function writePromptDrafts(prompt: string, count: number, category: CategorySlug): Promise<PromptDraft[]> {
+/**
+ * Saves the principle and asks the text model for `count` draft prompts (nothing else saved).
+ * `date` (yyyy-mm-dd, or '' for none) is the day the images are for: its panchang is computed
+ * on the server and, with `checkWeb`, also looked up on the web (costs a little) to compare.
+ */
+export function writePromptDrafts(
+  prompt: string,
+  count: number,
+  category: CategorySlug,
+  date: string,
+  checkWeb: boolean,
+): Promise<WriteResult> {
   return withFallback(
-    async () =>
-      (await request<{ drafts: PromptDraft[] }>('/admin/principle/write', json('POST', { prompt, count, category })))
-        .drafts,
-    () => mock.mockWritePrompts(prompt, count),
+    () =>
+      request<WriteResult>(
+        '/admin/principle/write',
+        json('POST', { prompt, count, category, date: date || null, checkWeb: checkWeb && !!date }),
+      ),
+    async () => ({
+      drafts: await mock.mockWritePrompts(prompt, count),
+      calendar: null,
+      researchSummary: '',
+      recommendation: '',
+    }),
   );
 }
 

@@ -6,8 +6,10 @@
 // Everything is converted to JPEG first. WhatsApp Status on older Android phones handles
 // WebP/SVG unreliably, and JPEG is the one format every phone accepts.
 //
-// The file is prepared *before* the tap (see ImageViewer): navigator.share() must run
+// The file is prepared *before* the tap (see ReelViewer): navigator.share() must run
 // within the tap's user-activation window, so there's no time to download then.
+
+import type { MediaType } from '../api/types';
 
 const JPEG_QUALITY = 0.9;
 
@@ -41,14 +43,26 @@ async function toJpeg(blob: Blob): Promise<Blob> {
   }
 }
 
+const VIDEO_EXTENSIONS: Record<string, string> = {
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+};
+
 /**
- * Downloads the image and turns it into a shareable JPEG file.
- * Note: production images on the CDN must send CORS headers for this fetch to succeed.
+ * Downloads the item and turns it into a shareable file: images become JPEG, videos are
+ * shared as they are (MP4 is what WhatsApp plays everywhere).
+ * Note: production media on the CDN must send CORS headers for this fetch to succeed.
  */
-export async function prepareShareFile(url: string, id: number): Promise<File> {
+export async function prepareShareFile(url: string, id: number, type: MediaType = 'image'): Promise<File> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Image download failed (${res.status})`);
-  const jpeg = await toJpeg(await res.blob());
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const blob = await res.blob();
+  if (type === 'video') {
+    const mime = blob.type in VIDEO_EXTENSIONS ? blob.type : 'video/mp4';
+    return new File([blob], `stotram-${id}.${VIDEO_EXTENSIONS[mime]}`, { type: mime });
+  }
+  const jpeg = await toJpeg(blob);
   return new File([jpeg], `stotram-${id}.jpg`, { type: 'image/jpeg' });
 }
 

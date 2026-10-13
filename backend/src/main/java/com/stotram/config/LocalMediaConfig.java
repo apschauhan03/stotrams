@@ -9,7 +9,7 @@ import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * Serves locally stored images straight from the storage directory on disk.
+ * Serves locally stored images and videos straight from the storage directory on disk.
  *
  * <p>Why this exists: {@code LocalImageStorage} writes into {@code app.media.local-dir}
  * ({@code src/main/resources/static} by default), but Spring's built-in static handler
@@ -18,25 +18,29 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 404 until the next rebuild. Reading from the same directory the storage writes to makes a
  * new image viewable the moment it's saved.
  *
- * <p>Goes away with the move to R2/CDN, when images are no longer served by this app.
+ * <p>Goes away with the move to R2/CDN, when media is no longer served by this app.
  */
 @Configuration
 public class LocalMediaConfig implements WebMvcConfigurer {
 
-    private final String imagesLocation;
+    /** Top-level key prefixes: images/<category>/<date>/<uuid>.png, videos/<category>/... */
+    private static final String[] FOLDERS = {"images", "videos"};
+
+    private final Path root;
 
     public LocalMediaConfig(@Value("${app.media.local-dir:src/main/resources/static}") String localDir) {
-        // Keys look like images/<category>/<date>/<uuid>.png, so /images/** maps onto
-        // <local-dir>/images/. The trailing slash is required for a directory location.
-        String uri = Path.of(localDir).toAbsolutePath().normalize().resolve("images").toUri().toString();
-        this.imagesLocation = uri.endsWith("/") ? uri : uri + "/";
+        this.root = Path.of(localDir).toAbsolutePath().normalize();
     }
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        registry.addResourceHandler("/images/**")
-                .addResourceLocations(imagesLocation)
-                // Keys are unique (UUID) and never overwritten, so browsers may cache freely.
-                .setCacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePublic());
+        for (String folder : FOLDERS) {
+            // The trailing slash is required for a directory location.
+            String uri = root.resolve(folder).toUri().toString();
+            registry.addResourceHandler("/" + folder + "/**")
+                    .addResourceLocations(uri.endsWith("/") ? uri : uri + "/")
+                    // Keys are unique (UUID) and never overwritten, so browsers may cache freely.
+                    .setCacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePublic());
+        }
     }
 }

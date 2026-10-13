@@ -18,7 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Moves every APPROVED item into the public feed. Called by the scheduled job and by the
  * admin's "Publish now" button — same code path either way.
  *
- * <p>Every published image carries the Stotrams watermark: the clean original is read,
+ * <p>Every published image (not video, for now) carries the Stotrams watermark: the clean original is read,
  * stamped by {@link Watermarker}, saved as a JPEG under {@code images/published/...}, and
  * {@code r2_key} is pointed at that copy ({@code original_key} keeps the clean one). An item
  * whose watermarking fails is <b>not</b> published — it stays APPROVED and is reported, so
@@ -63,7 +63,8 @@ public class PublishService {
         int published = 0;
         int failed = 0;
         for (ContentItem item : items.findByStatusOrderByIdDesc("APPROVED")) {
-            if (!watermark(item)) {
+            // Videos go live as uploaded: the watermark is image-only until we stamp video with ffmpeg.
+            if (!isVideo(item) && !watermark(item)) {
                 failed++;
                 continue;                       // stays APPROVED: never live without the mark
             }
@@ -93,6 +94,7 @@ public class PublishService {
     @Transactional
     public boolean watermarkLiveItems(boolean all) {
         List<ContentItem> todo = items.findByStatusOrderByIdDesc("PUBLISHED").stream()
+                .filter(item -> !isVideo(item))
                 .filter(item -> all || item.getOriginalKey() == null)
                 .toList();
         int done = (int) todo.stream().filter(this::watermark).count();
@@ -100,6 +102,10 @@ public class PublishService {
             log.info("Watermarked {}/{} live item(s){}", done, todo.size(), all ? " (new watermark design)" : "");
         }
         return done == todo.size();
+    }
+
+    private static boolean isVideo(ContentItem item) {
+        return "VIDEO".equals(item.getType());
     }
 
     /**
