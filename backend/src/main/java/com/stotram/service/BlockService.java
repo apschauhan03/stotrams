@@ -12,6 +12,8 @@ import com.stotram.repository.GenerationBatchRepository;
 import com.stotram.repository.PromptTemplateRepository;
 import com.stotram.service.generation.GenerationService;
 import com.stotram.service.generation.ImageEditService;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -97,7 +99,7 @@ public class BlockService {
             PromptTemplate block = new PromptTemplate();
             try {
                 apply(block, new BlockRequest(item.name(), request.category(), request.language(), item.prompt(),
-                        request.model(), request.imageCount(), request.active()));
+                        request.model(), request.imageCount(), request.active(), request.targetDate()));
             } catch (ResponseStatusException e) {
                 throw badRequest("Block " + (i + 1) + ": " + e.getReason());
             }
@@ -147,6 +149,12 @@ public class BlockService {
         if (count == null || count < 1 || count > GenerationService.MAX_COUNT) {
             throw badRequest("Image count must be between 1 and " + GenerationService.MAX_COUNT);
         }
+        LocalDate targetDate;
+        try {
+            targetDate = trim(r.targetDate()).isEmpty() ? null : LocalDate.parse(trim(r.targetDate()));
+        } catch (DateTimeParseException e) {
+            throw badRequest("Date must look like 2026-10-14");
+        }
 
         block.setName(name);
         block.setCategory(category);
@@ -155,6 +163,7 @@ public class BlockService {
         block.setModel(model);
         block.setImageCount(count);
         block.setActive(r.active() == null || r.active());
+        block.setTargetDate(targetDate);
     }
 
     private PromptTemplate require(Long id) {
@@ -176,6 +185,7 @@ public class BlockService {
                 b.getModel(),
                 b.getImageCount(),
                 b.isActive(),
+                b.getTargetDate(),
                 b.getSortOrder(),
                 lastRun,
                 b.getUpdatedAt());

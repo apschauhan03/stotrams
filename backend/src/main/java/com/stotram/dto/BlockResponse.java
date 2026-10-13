@@ -1,8 +1,9 @@
 package com.stotram.dto;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
-/** A generation block as shown in the admin panel. */
+/** A generation block as shown in the admin panel. {@code targetDate} null = any day. */
 public record BlockResponse(
         Long id,
         String name,
@@ -12,6 +13,7 @@ public record BlockResponse(
         String model,
         int imageCount,
         boolean active,
+        LocalDate targetDate,
         int sortOrder,
         OffsetDateTime lastGeneratedAt,
         OffsetDateTime updatedAt) {

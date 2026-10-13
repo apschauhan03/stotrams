@@ -75,6 +75,9 @@ public class ImageEditService {
         }
         ContentItem source = items.findById(sourceId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No content item with id " + sourceId));
+        if (!"IMAGE".equals(source.getType())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only images can be edited with a prompt");
+        }
 
         String modelValue = model == null || model.isBlank() ? defaultModel : model.trim();
         ImageGenerator generator = generation.generatorFor(modelValue);

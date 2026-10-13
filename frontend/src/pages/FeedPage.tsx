@@ -4,7 +4,8 @@ import type { CategorySlug, FeedItem } from '../api/types';
 import { CategoryTabs } from '../components/CategoryTabs';
 import { Header } from '../components/Header';
 import { ImageGrid } from '../components/ImageGrid';
-import { ImageViewer } from '../components/ImageViewer';
+import { BottomNav } from '../components/BottomNav';
+import { ReelViewer } from '../components/ReelViewer';
 import { useLang } from '../i18n';
 
 /** Morning images until 4 PM, night images after — what people are looking for right now. */
@@ -58,7 +59,7 @@ export function FeedPage() {
   return (
     <>
       <Header />
-      <main className="page">
+      <main className="page page--with-nav">
         <CategoryTabs value={category} onChange={setCategory} />
 
         <ImageGrid items={items} onOpen={setOpenIndex} onReachEnd={loadMore} hasMore={nextPage !== null} />
@@ -76,10 +77,17 @@ export function FeedPage() {
         {status === 'idle' && items.length > 0 && nextPage === null && <p className="feed-status">{t.end}</p>}
       </main>
 
-      <footer className="site-footer">{t.footer}</footer>
+      <footer className="site-footer site-footer--with-nav">{t.footer}</footer>
+      <BottomNav />
 
       {openIndex !== null && items[openIndex] && (
-        <ImageViewer items={items} index={openIndex} onIndexChange={setOpenIndex} onClose={() => setOpenIndex(null)} />
+        <ReelViewer
+          items={items}
+          startIndex={openIndex}
+          onClose={() => setOpenIndex(null)}
+          onReachEnd={loadMore}
+          hasMore={nextPage !== null}
+        />
       )}
     </>
   );

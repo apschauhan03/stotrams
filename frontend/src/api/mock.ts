@@ -15,6 +15,7 @@ import type {
   FeedResponse,
   GenerateResponse,
   Lang,
+  MediaType,
   Principle,
   PromptDraft,
   PublishResult,
@@ -148,6 +149,7 @@ function candidate(category: CategorySlug, lang: Lang, status: CandidateStatus):
   const id = nextId++;
   return {
     id,
+    type: 'image',
     url: drawImage(category, lang, DEITIES[id % DEITIES.length]),
     status,
     category,
@@ -165,13 +167,32 @@ const candidates: Candidate[] = [
   ...Array.from({ length: 2 }, () => candidate('good-night', 'en', 'REJECTED')),
 ];
 
-export async function mockCandidates(status: CandidateStatus): Promise<Candidate[]> {
+export async function mockCandidates(status: CandidateStatus, type: MediaType): Promise<Candidate[]> {
   await sleep(250);
   // Copies, like a real HTTP response — callers must never share objects with the store.
   return candidates
-    .filter((c) => c.status === status)
+    .filter((c) => c.status === status && c.type === type)
     .sort((a, b) => b.id - a.id)
     .map((c) => ({ ...c }));
+}
+
+/** The demo keeps the uploaded file in memory (an object URL), gone on reload. */
+export async function mockUploadVideo(
+  file: File,
+  category: CategorySlug,
+  lang: Lang,
+  size: { width: number; height: number } | null,
+): Promise<Candidate> {
+  await sleep(500);
+  const video: Candidate = {
+    ...candidate(category, lang, 'GENERATED'),
+    type: 'video',
+    url: URL.createObjectURL(file),
+    width: size?.width ?? null,
+    height: size?.height ?? null,
+  };
+  candidates.push(video);
+  return { ...video };
 }
 
 /** Demo edit: a new candidate (a fresh placeholder) linked to its source. */
@@ -260,6 +281,7 @@ const blocks: Block[] = [
     model: 'fake',
     imageCount: 3,
     active: true,
+    targetDate: null,
     sortOrder: 1,
     lastGeneratedAt: null,
     updatedAt: new Date().toISOString(),
@@ -274,6 +296,7 @@ const blocks: Block[] = [
     model: 'fake',
     imageCount: 2,
     active: true,
+    targetDate: null,
     sortOrder: 2,
     lastGeneratedAt: null,
     updatedAt: new Date().toISOString(),
@@ -329,7 +352,7 @@ export async function mockBulkCreate(input: BulkBlocksInput): Promise<Block[]> {
   return created;
 }
 
-let principle: Principle = { prompt: '', updatedAt: null, model: 'gpt-5.4-mini (demo)' };
+let principle: Principle = { prompt: '', updatedAt: null, model: 'gpt-5.4-mini (demo)', isDefault: false };
 
 export async function mockPrinciple(): Promise<Principle> {
   return { ...principle };

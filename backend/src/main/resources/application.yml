@@ -26,6 +26,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  servlet:
+    multipart:
+      # Manual video upload (POST /admin/videos). Short devotional clips are a few MB;
+      # WhatsApp itself caps shared videos well below this.
+      max-file-size: ${MAX_UPLOAD_SIZE:100MB}
+      max-request-size: ${MAX_UPLOAD_SIZE:100MB}
+
 server:
   port: 9303
   servlet:
@@ -46,6 +53,9 @@ app:
     # Text model that expands the admin's principle prompt into block prompts
     # (PromptWriter). Uses the same OpenAI key as image generation.
     model: ${OPENAI_TEXT_MODEL:gpt-5.4-mini}
+    # Lets the admin cross-check a date's panchang on the web (OpenAI web_search tool)
+    # next to the server's own calculation. Off = only the calculation is used.
+    web-search: ${PROMPT_WEB_SEARCH:true}
   admin:
     # The one admin account, created/updated in admin_user on startup (AdminBootstrap).
     # Environment only — this repo is public, so never put real values in this file.

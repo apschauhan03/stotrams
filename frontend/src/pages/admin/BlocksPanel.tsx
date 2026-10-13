@@ -31,7 +31,17 @@ const NEW_BLOCK: BlockInput = {
   model: '', // filled with the first dropdown option when the editor opens
   imageCount: 10,
   active: true,
+  targetDate: null,
 };
+
+/** "2026-10-14" -> "Wed, 14 Oct 2026" (a calendar day, so no timezone shift). */
+const formatTargetDate = (iso: string) =>
+  new Date(`${iso}T12:00:00`).toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 
 const DATE = new Intl.DateTimeFormat('en-IN', {
   timeZone: 'Asia/Kolkata',
@@ -270,9 +280,9 @@ function BlockCard({
   }
 
   function toggleActive() {
-    const { name, category, language, prompt, model, imageCount } = block;
+    const { name, category, language, prompt, model, imageCount, targetDate } = block;
     act(async () => {
-      await updateBlock(block.id, { name, category, language, prompt, model, imageCount, active: !block.active });
+      await updateBlock(block.id, { name, category, language, prompt, model, imageCount, targetDate, active: !block.active });
       onChanged();
     });
   }
@@ -289,6 +299,11 @@ function BlockCard({
       </div>
 
       <div className="block__chips">
+        {block.targetDate && (
+          <span className="chip chip--date" title="The day these images are for">
+            📅 {formatTargetDate(block.targetDate)}
+          </span>
+        )}
         <span className="chip">{block.category === 'good-night' ? '🌙' : '🌅'} {categoryName}</span>
         <span className="chip">{block.language.toUpperCase()}</span>
         <span className={`chip${free ? '' : ' chip--paid'}`}>
@@ -356,6 +371,7 @@ function BlockEditor({
     model: initial.model || options.models[0]?.value || '',
     imageCount: initial.imageCount,
     active: initial.active,
+    targetDate: initial.targetDate,
   });
   // A block saved with a model that's no longer offered still shows (and keeps) it.
   const modelChoices = options.models.some((m) => m.value === form.model)
@@ -431,6 +447,13 @@ function BlockEditor({
               </option>
             ))}
           </select>
+        </Field>
+        <Field label="For date (optional)" hint={form.targetDate ? undefined : 'Any day'}>
+          <input
+            type="date"
+            value={form.targetDate ?? ''}
+            onChange={(e) => set('targetDate', e.target.value || null)}
+          />
         </Field>
         <Field label={`Images per run (1–${options.maxImageCount})`} error={errors.imageCount}>
           <input

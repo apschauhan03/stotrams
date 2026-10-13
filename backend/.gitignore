@@ -12,3 +12,5 @@ application-local.yml
 # runtime by LocalImageStorage, and headed for R2/CDN once that lands. The README in
 # static/images/ stays tracked; the per-category dated folders under it do not.
 src/main/resources/static/images/*/
+# Manually uploaded videos (admin panel): same story, not source.
+src/main/resources/static/videos/

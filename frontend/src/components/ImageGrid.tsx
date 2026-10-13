@@ -39,14 +39,24 @@ export function ImageGrid({ items, onOpen, onReachEnd, hasMore }: Props) {
               onClick={() => onOpen(index)}
               aria-label={t.openImage}
             >
-              <img
-                src={item.url}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                width={item.width ?? 1080}
-                height={item.height ?? 1350}
-              />
+              {item.type === 'video' ? (
+                <>
+                  {/* #t=0.1 makes phones paint the first frame as the thumbnail. */}
+                  <video src={`${item.url}#t=0.1`} muted playsInline preload="metadata" />
+                  <span className="grid__play" aria-hidden="true">
+                    ▶
+                  </span>
+                </>
+              ) : (
+                <img
+                  src={item.url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  width={item.width ?? 1080}
+                  height={item.height ?? 1350}
+                />
+              )}
             </button>
           </li>
         ))}

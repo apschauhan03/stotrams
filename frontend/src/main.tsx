@@ -9,6 +9,7 @@ import './styles.css';
 import { LangProvider } from './i18n';
 import { AdminPage } from './pages/AdminPage';
 import { FeedPage } from './pages/FeedPage';
+import { PanchangPage } from './pages/PanchangPage';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -16,6 +17,7 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <Routes>
           <Route path="/admin/*" element={<AdminPage />} />
+          <Route path="/panchang" element={<PanchangPage />} />
           <Route path="*" element={<FeedPage />} />
         </Routes>
       </BrowserRouter>

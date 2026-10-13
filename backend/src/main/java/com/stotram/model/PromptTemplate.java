@@ -10,6 +10,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -60,6 +61,10 @@ public class PromptTemplate {
     /** Deleted from the panel. Kept because past batches reference it. */
     @Column(nullable = false)
     private boolean archived;
+
+    /** The day the images are for (from the master prompt's date). Null = any day. */
+    @Column(name = "target_date")
+    private LocalDate targetDate;
 
     @Column(name = "sort_order", nullable = false)
     private int sortOrder;

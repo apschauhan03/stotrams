@@ -32,8 +32,9 @@ public class AdminReviewService {
                 : mediaBaseUrl;
     }
 
-    public List<CandidateResponse> candidates(String status) {
-        return repository.findByStatusOrderByIdDesc(status).stream()
+    /** One review tab: items in {@code status} of one media {@code type} (IMAGE or VIDEO). */
+    public List<CandidateResponse> candidates(String status, String type) {
+        return repository.findByStatusAndTypeOrderByIdDesc(status, type).stream()
                 .map(this::toCandidate)
                 .toList();
     }
@@ -65,6 +66,7 @@ public class AdminReviewService {
     public CandidateResponse toCandidate(ContentItem c) {
         return new CandidateResponse(
                 c.getId(),
+                c.getType().toLowerCase(),
                 mediaBaseUrl + "/" + c.getR2Key(),
                 c.getStatus(),
                 c.getCategory().getSlug(),
